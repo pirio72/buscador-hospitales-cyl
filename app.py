@@ -5,33 +5,29 @@ import folium
 from streamlit_folium import st_folium
 import requests
 
-# Configura el título de la pestaña del navegador y el icono
+# -----------------------------------------------------------------------------
+# CONFIGURACIÓN DE PÁGINA
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Buscador Avanzado de Hospitales - CyL",  # <--- Esto solo va a la pestaña
+    page_title="Buscador Avanzado de Hospitales - CyL",
     page_icon="🏥",
     layout="wide"
 )
 
-# TÍTULO VISIBLE DENTRO DE LA PÁGINA WEB
+# TÍTULO E INFORMACIÓN
 st.title("🏥 ¿Qué hospital me pilla más cerca?")
 st.markdown("### Encuentra el hospital más cercano a tu municipio de Castilla y León")
-#st.caption("Localiza centros sanitarios por especialidad médica, distancia por carretera y tiempo de viaje estimado.")
 st.info("💡 **Indicaciones:** Localiza los centros sanitarios más cercanos según la especialidad médica seleccionada. Las distancias y tiempos de viaje mostrados son **reales por carretera**.")
 
-# 1. CABECERA
-# st.title("🏥 Buscador Avanzado de Hospitales - Castilla y León")
-
-# 2. CAJA DE METODOLOGÍA (Usamos st.expander para que no ocupe espacio si el usuario no la abre)
 with st.expander("ℹ️ Ver metodología y fuente de datos"):
     st.markdown("""
     **¿Cómo funciona este buscador?**
     
     1. **Geolocalización y Origen:** Se toma como punto de partida la ubicación del municipio seleccionado de Castilla y León a partir del [listado oficial de municipios](https://datosabiertos.jcyl.es/web/jcyl/set/es/sector-publico/municipios/1284278782067) de la Junta de Castilla y León.
     2. **Cálculo de Rutas Reales:** Las distancias y tiempos de desplazamiento se calculan consultando la API pública de **OSRM (Open Source Routing Machine)** para obtener trayectos y tiempos reales por carretera.
-    3. **Filtrado por Especialidades:** Los datos de especialidades de los centros sanitarios proceden del [Catálogo Oficial de Hospitales del Ministerio de Sanidad](https://www.sanidad.gob.es/ciudadanos/centrosCA.do), que han sido geolocalizado usando la librería Geopy.
+    3. **Filtrado por Especialidades:** Los datos de especialidades de los centros sanitarios proceden del [Catálogo Oficial de Hospitales del Ministerio de Sanidad](https://www.sanidad.gob.es/ciudadanos/centrosCA.do), que han sido geolocalizados usando la librería Geopy.
     4. El sitio web se ha generado mediante Python, y se ha programado con la ayuda de Gemini.
     """)
- 
 
 # -----------------------------------------------------------------------------
 # DICCIONARIO CON PALABRAS CLAVE PRECISAS
@@ -120,32 +116,12 @@ DICCIONARIO_ESPECIALIDADES = {
 # -----------------------------------------------------------------------------
 @st.cache_data
 def cargar_datos():
-    df_mun = pd.read_csv("municipios_jcyl.csv", encoding="utf-8-sig")
-    df_hosp = pd.read_csv("catalogo_hospitales.csv", encoding="utf-8-sig")
+    # Lectura de los archivos CSV con sus nuevos nombres normalizados
+    df_mun = pd.read_csv("municipios_jcyl.csv", encoding="utf-8")
+    df_hosp = pd.read_csv("catalogo_hospitales.csv", encoding="utf-8")
     
     df_mun.columns = df_mun.columns.str.strip().str.lower()
     df_hosp.columns = df_hosp.columns.str.strip().str.lower()
-
-    # Función de reparación de caracteres mal codificados (sin librerías externas)
-    def reparar_texto(texto):
-        if not isinstance(texto, str):
-            return texto
-        try:
-            return texto.encode('latin1').decode('utf-8')
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            return texto
-
-    columnas_texto = [
-        'nombre', 'municipio', 'provincia', 'comunidad autonoma', 
-        'comunidad_autonoma', 'dependencia funcional', 'tipo de centro', 
-        'observaciones', 'servicios'
-    ]
-    
-    for col in columnas_texto:
-        if col in df_hosp.columns:
-            df_hosp[col] = df_hosp[col].apply(reparar_texto)
-        if col in df_mun.columns:
-            df_mun[col] = df_mun[col].apply(reparar_texto)
 
     df_mun = df_mun.rename(columns={'municipio': 'nombre', 'lat': 'latitud', 'lon': 'longitud'})
 
@@ -161,6 +137,10 @@ def cargar_datos():
 
     df_mun = df_mun.dropna(subset=["latitud", "longitud"])
     df_hosp = df_hosp.dropna(subset=["latitud", "longitud"])
+
+    # Limpieza preventiva de espacios
+    df_mun["provincia"] = df_mun["provincia"].astype(str).str.strip()
+    df_mun["nombre"] = df_mun["nombre"].astype(str).str.strip()
 
     def quitar_acentos(texto):
         if not isinstance(texto, str):
@@ -203,12 +183,9 @@ def cargar_datos():
 
     # Tipo de centro
     col_tipo = next((c for c in ['tipo de centro', 'tipo_centro', 'especialidad', 'oferta asistencial'] if c in df_hosp.columns), None)
-    if col_tipo:
-        df_hosp['tipo_centro_clean'] = df_hosp[col_tipo].fillna('General / Sin especificar')
-    else:
-        df_hosp['tipo_centro_clean'] = 'General'
+    df_hosp['tipo_centro_clean'] = df_hosp[col_tipo].fillna('General / Sin especificar') if col_tipo else 'General'
 
-    # Texto indexado
+    # Texto indexado para búsquedas
     obs_text = df_hosp['observaciones'].astype(str) if 'observaciones' in df_hosp.columns else ""
     serv_text = df_hosp['servicios'].astype(str) if 'servicios' in df_hosp.columns else ""
 
@@ -220,7 +197,7 @@ def cargar_datos():
 
     return df_mun, df_hosp
 
-# LLAMADA OBLIGATORIA A LA CARGA DE DATOS
+# CARGA OBLIGATORIA
 try:
     df_municipios, df_hospitales = cargar_datos()
     st.sidebar.success("✅ Datos cargados correctamente")
@@ -242,7 +219,6 @@ def haversine_vectorized(lat1, lon1, lat2, lon2):
 
 @st.cache_data(show_spinner=False)
 def obtener_ruta_osrm(lat1, lon1, lat2, lon2):
-    """Consulta la API de OSRM para obtener la distancia real por carretera y tiempo de viaje."""
     url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
     try:
         r = requests.get(url, timeout=3)
@@ -397,18 +373,21 @@ with col2:
 
 st.subheader("📊 Lista Detallada de Tiempos y Distancias")
 cols_tabla = [c for c in ["nombre", "origen_ccaa", "titularidad", "tipo_centro_clean", "provincia", "distancia_carretera_km", "tiempo_min"] if c in cercanos.columns]
-st.dataframe(cercanos[cols_tabla].rename(columns={
-    'nombre': 'Hospital',
-    'origen_ccaa': 'Comunidad Aut.',
-    'titularidad': 'Titularidad',
-    'tipo_centro_clean': 'Tipo de Centro / Especialidad',
-    'provincia': 'Provincia',
-    'distancia_carretera_km': 'Distancia Carretera (km)',
-    'tiempo_min': 'Tiempo estimado (min)'
-}), use_container_width=True)
 
-# 3. PIE DE PÁGINA / AUTORÍA (Colócalo al final de todo tu script app5.py)
-st.divider()  # Línea separadora visual
+st.dataframe(
+    cercanos[cols_tabla].rename(columns={
+        'nombre': 'Hospital',
+        'origen_ccaa': 'Comunidad Aut.',
+        'titularidad': 'Titularidad',
+        'tipo_centro_clean': 'Tipo de Centro / Especialidad',
+        'provincia': 'Provincia',
+        'distancia_carretera_km': 'Distancia Carretera (km)',
+        'tiempo_min': 'Tiempo estimado (min)'
+    }),
+    width="stretch"
+)
+
+st.divider()
 
 st.markdown(
     """

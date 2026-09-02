@@ -271,9 +271,16 @@ provincia_sel = st.sidebar.selectbox("Provincia de CyL:", provincias)
 municipios_prov = df_municipios[df_municipios["provincia"] == provincia_sel]
 municipio_sel = st.sidebar.selectbox("Municipio:", sorted(municipios_prov["nombre"].unique()))
 
-datos_mun = municipios_prov[municipios_prov["nombre"] == municipio_sel].iloc[0]
-lat_mun = float(datos_mun["latitud"])
-lon_mun = float(datos_mun["longitud"])
+# 1. Filtramos el municipio
+datos_mun = municipios_prov[municipios_prov["nombre"] == municipio_sel]
+
+# 2. Extraemos las coordenadas usando .iloc[0] para obtener el valor escalar
+if not datos_mun.empty:
+    lat_mun = float(datos_mun["latitud"].iloc[0])
+    lon_mun = float(datos_mun["longitud"].iloc[0])
+else:
+    st.error("No se encontraron coordenadas para el municipio seleccionado.")
+    st.stop()
 
 st.sidebar.header("🩺 2. Especialidad Médica")
 especialidad_elegida = st.sidebar.selectbox(

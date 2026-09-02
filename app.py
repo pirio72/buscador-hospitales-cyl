@@ -5,7 +5,7 @@ from streamlit_folium import st_folium
 import requests
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DE LA PÁGINA (Pestaña del navegador)
+# 1. CONFIGURACIÓN DE LA PÁGINA
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Buscador Avanzado de Hospitales - Castilla y León",
@@ -29,34 +29,53 @@ with st.expander("ℹ️ Ver metodología y fuente de datos"):
     """)
 
 # -----------------------------------------------------------------------------
-# 3. CARGA Y LIMPIEZA DE DATOS (CON CACHÉ)
+# 3. CARGA Y LIMPIEZA DE DATOS (CON CACHÉ BLINDADA)
 # -----------------------------------------------------------------------------
 @st.cache_data
 def cargar_datos():
     # Cargar municipios
     try:
-        df_mun = pd.read_csv("MunicipiosJCyL_utf8.csv", encoding="utf-8")
-    except UnicodeDecodeError:
+        df_mun = pd.read_csv("MunicipiosJCyL_utf8.csv", encoding="utf-8-sig")
+    except Exception:
         df_mun = pd.read_csv("MunicipiosJCyL_utf8.csv", encoding="latin1")
 
     # Cargar hospitales
     try:
-        df_hosp = pd.read_csv("Catalogo_Hospitales_Geolocalizados.csv", encoding="utf-8")
-    except UnicodeDecodeError:
+        df_hosp = pd.read_csv("Catalogo_Hospitales_Geolocalizados.csv", encoding="utf-8-sig")
+    except Exception:
         df_hosp = pd.read_csv("Catalogo_Hospitales_Geolocalizados.csv", encoding="latin1")
 
-    # Limpieza de espacios en blanco invisibles
-    df_mun["provincia"] = df_mun["provincia"].astype(str).str.strip()
-    df_mun["nombre"] = df_mun["nombre"].astype(str).str.strip()
-    
-    # Asegurar conversión numérica de coordenadas en municipios
-    df_mun["latitud"] = pd.to_numeric(df_mun["latitud"].astype(str).str.replace(',', '.'), errors='coerce')
-    df_mun["longitud"] = pd.to_numeric(df_mun["longitud"].astype(str).str.replace(',', '.'), errors='coerce')
+    # Normalizar nombres de columnas a minúsculas y sin espacios externos
+    df_mun.columns = df_mun.columns.str.strip().str.lower()
+    df_hosp.columns = df_hosp.columns.str.strip().str.lower()
 
-    # Limpieza de datos en hospitales
-    df_hosp["LATITUD"] = pd.to_numeric(df_hosp["LATITUD"].astype(str).str.replace(',', '.'), errors='coerce')
-    df_hosp["LONGITUD"] = pd.to_numeric(df_hosp["LONGITUD"].astype(str).str.replace(',', '.'), errors='coerce')
-    df_hosp["OFERTA_DOC"] = df_hosp["OFERTA_DOC"].fillna("Sin especificar").astype(str)
+    # Detección inteligente de columnas en Municipios
+    col_prov = [c for c in df_mun.columns if 'prov' in c][0]
+    col_mun = [c for c in df_mun.columns if 'nom' in c or 'muni' in c][0]
+    col_lat_mun = [c for c in df_mun.columns if 'lat' in c][0]
+    col_lon_mun = [c for c in df_mun.columns if 'lon' in c][0]
+
+    df_mun["provincia"] = df_mun[col_prov].astype(str).str.strip()
+    df_mun["nombre"] = df_mun[col_mun].astype(str).str.strip()
+    df_mun["latitud"] = pd.to_numeric(df_mun[col_lat_mun].astype(str).str.replace(',', '.'), errors='coerce')
+    df_mun["longitud"] = pd.to_numeric(df_mun[col_lon_mun].astype(str).str.replace(',', '.'), errors='coerce')
+
+    # Detección inteligente de columnas en Hospitales
+    col_lat_h = [c for c in df_hosp.columns if 'lat' in c][0]
+    col_lon_h = [c for c in df_hosp.columns if 'lon' in c][0]
+    col_oferta = [c for c in df_hosp.columns if 'ofer' in c or 'doc' in c or 'esp' in c][0]
+    col_nom_h = [c for c in df_hosp.columns if 'nom' in c or 'hosp' in c][0]
+
+    df_hosp["NOMBRE"] = df_hosp[col_nom_h].astype(str).str.strip()
+    df_hosp["LATITUD"] = pd.to_numeric(df_hosp[col_lat_h].astype(str).str.replace(',', '.'), errors='coerce')
+    df_hosp["LONGITUD"] = pd.to_numeric(df_hosp[col_lon_h].astype(str).str.replace(',', '.'), errors='coerce')
+    df_hosp["OFERTA_DOC"] = df_hosp[col_oferta].fillna("Sin especificar").astype(str)
+    
+    cols_m_h = [c for c in df_hosp.columns if 'muni' in c]
+    if cols_m_h:
+        df_hosp["NOMBRE_MUNICIPIO"] = df_hosp[cols_m_h[0]].astype(str).str.strip()
+    else:
+        df_hosp["NOMBRE_MUNICIPIO"] = ""
 
     return df_mun, df_hosp
 
@@ -92,7 +111,7 @@ provincia_sel = st.sidebar.selectbox("1. Selecciona Provincia:", provincias_disp
 municipios_prov = df_municipios[df_municipios["provincia"] == provincia_sel]
 municipios_disponibles = sorted(municipios_prov["nombre"].dropna().unique())
 
-# Selección de Municipio (Protegido)
+# Selección de Municipio (Protegido contra IndexError)
 if municipios_disponibles:
     municipio_sel = st.sidebar.selectbox("2. Selecciona Municipio:", municipios_disponibles)
     datos_mun = municipios_prov[municipios_prov["nombre"] == municipio_sel]
@@ -120,7 +139,6 @@ especialidad_sel = st.sidebar.multiselect("Filtrar por especialidad:", especiali
 # -----------------------------------------------------------------------------
 # 6. FILTRADO Y CÁLCULO DE DISTANCIAS
 # -----------------------------------------------------------------------------
-# Filtrar por especialidades seleccionadas
 if especialidad_sel:
     def tiene_especialidad(oferta):
         return any(esp in str(oferta) for esp in especialidad_sel)
@@ -129,7 +147,6 @@ if especialidad_sel:
 else:
     df_filtrado = df_hospitales.copy()
 
-# Botón para ejecutar cálculo de rutas reales por carretera
 st.sidebar.markdown("---")
 calcular_rutas = st.sidebar.button("🚗 Calcular Distancias Reales", type="primary")
 
@@ -175,7 +192,6 @@ for _, row in df_filtrado.iterrows():
             icon=folium.Icon(color="red", icon="plus-square", prefix="fa")
         ).add_to(m)
 
-# Mostrar mapa en la app
 st_folium(m, width="100%", height=500)
 
 # Tabla de resultados

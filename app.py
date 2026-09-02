@@ -247,7 +247,14 @@ provincia_sel = st.sidebar.selectbox("Provincia de CyL:", provincias)
 municipios_prov = df_municipios[df_municipios["provincia"] == provincia_sel]
 municipio_sel = st.sidebar.selectbox("Municipio:", sorted(municipios_prov["nombre"].unique()))
 
-datos_mun = municipios_prov[municipios_prov["nombre"] == municipio_sel].iloc[0]
+# Filtrado seguro que evita el IndexError
+match_mun = municipios_prov[municipios_prov["nombre"] == municipio_sel]
+
+if match_mun.empty:
+    st.error(f"⚠️ No se encontraron coordenadas para '{municipio_sel}'. Por favor, selecciona otro municipio.")
+    st.stop()
+
+datos_mun = match_mun.iloc[0]
 lat_mun = float(datos_mun["latitud"])
 lon_mun = float(datos_mun["longitud"])
 

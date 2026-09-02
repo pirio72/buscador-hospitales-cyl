@@ -245,9 +245,16 @@ provincias = sorted(df_municipios["provincia"].dropna().unique())
 provincia_sel = st.sidebar.selectbox("Provincia de CyL:", provincias)
 
 municipios_prov = df_municipios[df_municipios["provincia"] == provincia_sel]
-municipio_sel = st.sidebar.selectbox("Municipio:", sorted(municipios_prov["nombre"].unique()))
 
-# Filtrado seguro que evita el IndexError
+# 1. Filtramos los nombres para eliminar nulos o textos vacíos antes de ordenar
+lista_municipios = [
+    m for m in municipios_prov["nombre"].dropna().unique() 
+    if str(m).strip() != "" and str(m).lower() != "none"
+]
+
+municipio_sel = st.sidebar.selectbox("Municipio:", sorted(lista_municipios))
+
+# 2. Filtrado seguro
 match_mun = municipios_prov[municipios_prov["nombre"] == municipio_sel]
 
 if match_mun.empty:
@@ -257,6 +264,7 @@ if match_mun.empty:
 datos_mun = match_mun.iloc[0]
 lat_mun = float(datos_mun["latitud"])
 lon_mun = float(datos_mun["longitud"])
+
 
 st.sidebar.header("🩺 2. Especialidad Médica")
 especialidad_elegida = st.sidebar.selectbox(
